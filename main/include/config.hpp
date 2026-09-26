@@ -17,6 +17,8 @@
 
 // Named constant for unset pin configurations
 inline constexpr uint8_t PIN_UNSET = 255;
+inline constexpr uint8_t PIN_LOCK = 25;
+inline constexpr uint8_t PIN_UNLOCK = 26;
 
 enum HK_COLOR { TAN, GOLD, SILVER, BLACK };
 enum class gpioMomentaryStateStatus : uint8_t {
@@ -252,6 +254,14 @@ namespace espConfig
     bool hkGpioControlledState = GPIO_HK_CONTROLLED_STATE;
     uint16_t gpioActionMomentaryTimeout = GPIO_ACTION_MOMENTARY_TIMEOUT;
     bool hkDumbSwitchMode = HK_DUMB_SWITCH_MODE;
+    // Dedicated pins pulsed on lock/unlock, in addition to gpioActionPin.
+    // PIN_UNSET (255) disables each pin independently.
+    uint8_t lockActionPin = PIN_LOCK;
+    uint8_t lockActionGpioState = 1;
+    uint16_t lockActionTimeout = 250;
+    uint8_t unlockActionPin = PIN_UNLOCK;
+    uint8_t unlockActionGpioState = 1;
+    uint16_t unlockActionTimeout = 250;
     uint8_t hkAltActionPin = GPIO_HK_ALT_ACTION_PIN;
     uint16_t hkAltActionTimeout = GPIO_HK_ALT_ACTION_TIMEOUT;
     uint8_t hkAltActionGpioState = GPIO_HK_ALT_ACTION_GPIO_STATE;

@@ -87,7 +87,9 @@ private:
       PIXEL_F,
       PIXEL_TAG_EVENT,
       ALT_GPIO,
-      ALT_GPIO_INIT
+      ALT_GPIO_INIT,
+      LOCK_GPIO,
+      UNLOCK_GPIO
     };
 
     struct TimerContext {
@@ -100,6 +102,23 @@ private:
     void hwEventTask();
     void runFeedbackSequence(HwEventType type);
     void applyLockState(int state);
+
+    // Type alias for the action-pin lease, used by the per-state hooks below.
+    using ActionLease = std::expected<GPIOAllocator::GPIOLease, GPIOAllocator::GPIOAllocatorError>;
+
+    /**
+     * @brief Runs whenever the lock transitions to LOCKED. Drives the action pin
+     *        to the configured lock level and is the place to add any additional
+     *        lock-only behavior (extra GPIO, distinct feedback, published event, etc.).
+     */
+    void onLockEngaged(ActionLease& action);
+
+    /**
+     * @brief Runs whenever the lock transitions to UNLOCKED. Drives the action pin
+     *        to the configured unlock level and is the place to add any additional
+     *        unlock-only behavior.
+     */
+    void onLockDisengaged(ActionLease& action);
 
     static void initiator_task_entry(void* arg);
     void initiator_task();
@@ -120,6 +139,8 @@ private:
     esp_timer_handle_t m_pixelTagEventTimer;
     esp_timer_handle_t m_altActionTimer;
     esp_timer_handle_t m_altActionInitTimer;
+    esp_timer_handle_t m_lockActionTimer;
+    esp_timer_handle_t m_unlockActionTimer;
 
     TaskHandle_t m_hwEventTaskHandle;
     QueueHandle_t m_hwEventQueue;
@@ -138,6 +159,8 @@ private:
     TimerContext m_pixelTagEvent_context;
     TimerContext m_altAction_context;
     TimerContext m_altActionInit_context;
+    TimerContext m_lockAction_context;
+    TimerContext m_unlockAction_context;
 
     static const char* TAG;
 
@@ -153,7 +176,9 @@ private:
       ALT_ACTION,
       ALT_ACTION_INIT,
       ALT_ACTION_LED,
-      TAG_EVENT
+      TAG_EVENT,
+      LOCK_ACTION,
+      UNLOCK_ACTION
     };
     static constexpr const char* pin_function_str(PinFunctions fn) {
       switch (fn) {
@@ -165,6 +190,8 @@ private:
         case ALT_ACTION_INIT: return "ALT_ACTION_INIT";
         case ALT_ACTION_LED: return "ALT_ACTION_LED";
         case TAG_EVENT:      return "TAG_EVENT";
+        case LOCK_ACTION:    return "LOCK_ACTION";
+        case UNLOCK_ACTION:  return "UNLOCK_ACTION";
       }
       return "Unknown";
     }

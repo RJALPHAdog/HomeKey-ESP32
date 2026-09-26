@@ -50,6 +50,10 @@ HardwareManager::HardwareManager(const espConfig::actions_config_t& miscConfig)
       GPIOAllocator::instance().acquire(gpio_num_t(miscConfig.hkAltActionInitPin), GPIO_MODE_INPUT, GPIOAllocator::PinRole::Irq, GPIOAllocator::PinConsumer::Hardware, "INIT_ALT_ACTION"));
   pinAllocations.emplace(PinFunctions::TAG_EVENT,
       GPIOAllocator::instance().acquire(gpio_num_t(miscConfig.tagEventPin), GPIO_MODE_OUTPUT, GPIOAllocator::PinRole::Led, GPIOAllocator::PinConsumer::Hardware, "TAG_EVENT_PIN"));
+  pinAllocations.emplace(PinFunctions::LOCK_ACTION,
+      GPIOAllocator::instance().acquire(gpio_num_t(miscConfig.lockActionPin), GPIO_MODE_OUTPUT, GPIOAllocator::PinRole::GpioOut, GPIOAllocator::PinConsumer::Hardware, "LOCK_ACTION"));
+  pinAllocations.emplace(PinFunctions::UNLOCK_ACTION,
+      GPIOAllocator::instance().acquire(gpio_num_t(miscConfig.unlockActionPin), GPIO_MODE_OUTPUT, GPIOAllocator::PinRole::GpioOut, GPIOAllocator::PinConsumer::Hardware, "UNLOCK_ACTION"));
   for(auto &p : pinAllocations){
     if(!p.second.has_value()){
       ESP_LOGW(TAG, "Could not acquire GPIO Pin for '%s' with error '%s'", pin_function_str(p.first), GPIOAllocator::error_str(p.second.error()));
@@ -94,7 +98,9 @@ HardwareManager::HardwareManager(const espConfig::actions_config_t& miscConfig)
       { ALT_ACTION,      "hkAltActionPin",        "ALT_ACTION",      GPIO_MODE_OUTPUT, GPIOAllocator::PinRole::GpioOut },
       { ALT_ACTION_LED,  "hkAltActionInitLedPin", "ALT_ACTION_LED",  GPIO_MODE_OUTPUT, GPIOAllocator::PinRole::Led     },
       { ALT_ACTION_INIT, "hkAltActionInitPin",    "INIT_ALT_ACTION", GPIO_MODE_INPUT,  GPIOAllocator::PinRole::Irq     },
-      { TAG_EVENT,       "tagEventPin",           "TAG_EVENT_PIN",   GPIO_MODE_OUTPUT, GPIOAllocator::PinRole::Led     }
+      { TAG_EVENT,       "tagEventPin",           "TAG_EVENT_PIN",   GPIO_MODE_OUTPUT, GPIOAllocator::PinRole::Led     },
+      { LOCK_ACTION,     "lockActionPin",         "LOCK_ACTION",     GPIO_MODE_OUTPUT, GPIOAllocator::PinRole::GpioOut },
+      { UNLOCK_ACTION,   "unlockActionPin",       "UNLOCK_ACTION",   GPIO_MODE_OUTPUT, GPIOAllocator::PinRole::GpioOut }
     };
 
     const PinMeta* meta = nullptr;
@@ -263,6 +269,8 @@ void HardwareManager::begin() {
     m_pixelTagEvent_context = {this, TimerSources::PIXEL_TAG_EVENT};
     m_altAction_context = {this, TimerSources::ALT_GPIO};
     m_altActionInit_context = {this, TimerSources::ALT_GPIO_INIT};
+    m_lockAction_context = {this, TimerSources::LOCK_GPIO};
+    m_unlockAction_context = {this, TimerSources::UNLOCK_GPIO};
 
     const esp_timer_create_args_t gpioS_timer_args = {
             .callback = &handleTimer,
@@ -328,6 +336,22 @@ void HardwareManager::begin() {
             .skip_unhandled_events = false
     };
 
+    const esp_timer_create_args_t lockAction_timer_args = {
+            .callback = &handleTimer,
+            .arg = (void*) &m_lockAction_context,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "lockActionTimer",
+            .skip_unhandled_events = false
+    };
+
+    const esp_timer_create_args_t unlockAction_timer_args = {
+            .callback = &handleTimer,
+            .arg = (void*) &m_unlockAction_context,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "unlockActionTimer",
+            .skip_unhandled_events = false
+    };
+
     auto create_timer = [](const esp_timer_create_args_t& args, esp_timer_handle_t& handle, const char* name) {
         esp_err_t err = esp_timer_create(&args, &handle);
         if (err != ESP_OK) {
@@ -344,6 +368,8 @@ void HardwareManager::begin() {
     create_timer(pixelTagEvent_timer_args, m_pixelTagEventTimer, "pixelTagEventTimer");
     create_timer(altAction_timer_args, m_altActionTimer, "altActionTimer");
     create_timer(altActionInit_timer_args, m_altActionInitTimer, "altActionInitTimer");
+    create_timer(lockAction_timer_args, m_lockActionTimer, "lockActionTimer");
+    create_timer(unlockAction_timer_args, m_unlockActionTimer, "unlockActionTimer");
 
     m_hwEventQueue = xQueueCreate(10, sizeof(HwEvent));
     xTaskCreateUniversal(hwEventTaskEntry, "hw_event_task", 3580, this, 3, &m_hwEventTaskHandle, 1);
@@ -433,6 +459,14 @@ void HardwareManager::handleTimer(void* arg){
       if(live(i->pinAllocations.at(ALT_ACTION_LED))) i->pinAllocations.at(ALT_ACTION_LED).value().set_level(0);
       ESP_LOGD(TAG, "ALT_GPIO_INIT");
       break;
+    case TimerSources::LOCK_GPIO:
+      if(live(i->pinAllocations.at(LOCK_ACTION))) i->pinAllocations.at(LOCK_ACTION).value().set_level(!i->m_miscConfig.lockActionGpioState);
+      ESP_LOGD(TAG, "LOCK_GPIO");
+      break;
+    case TimerSources::UNLOCK_GPIO:
+      if(live(i->pinAllocations.at(UNLOCK_ACTION))) i->pinAllocations.at(UNLOCK_ACTION).value().set_level(!i->m_miscConfig.unlockActionGpioState);
+      ESP_LOGD(TAG, "UNLOCK_GPIO");
+      break;
   }
 }
 
@@ -510,9 +544,9 @@ void HardwareManager::applyLockState(int receivedState) {
       return;
     }
     if (receivedState == LockManager::LOCKED) {
-        action->set_level(m_miscConfig.gpioActionLockState);
+        onLockEngaged(action);
     } else if (receivedState == LockManager::UNLOCKED) {
-        action->set_level(m_miscConfig.gpioActionUnlockState);
+        onLockDisengaged(action);
     }
     gpio_hold_en(action->get_pin());
     EventLockState s{
@@ -523,6 +557,35 @@ void HardwareManager::applyLockState(int receivedState) {
     std::vector<uint8_t> d;
     alpaca::serialize(s, d);
     AppEventLoop::publish(LOCK_EVENT, LOCK_UPDATE_STATE, d.data(), d.size());
+}
+
+/**
+ * @brief Drives the action pin to the configured LOCKED level.
+ *
+ * Add any lock-only side effects here (e.g. an extra GPIO pulse, a distinct
+ * feedback sequence, or publishing a dedicated event for other modules to react to).
+ */
+void HardwareManager::onLockEngaged(ActionLease& action) {
+    action->set_level(m_miscConfig.gpioActionLockState);
+    if (live(pinAllocations.at(LOCK_ACTION))) {
+        ESP_LOGI(TAG, "Triggering lock action pin %d for %dms", m_miscConfig.lockActionPin, m_miscConfig.lockActionTimeout);
+        pinAllocations.at(LOCK_ACTION)->set_level(m_miscConfig.lockActionGpioState);
+        if (m_lockActionTimer) esp_timer_start_once(m_lockActionTimer, m_miscConfig.lockActionTimeout * 1000);
+    }
+}
+
+/**
+ * @brief Drives the action pin to the configured UNLOCKED level.
+ *
+ * Add any unlock-only side effects here.
+ */
+void HardwareManager::onLockDisengaged(ActionLease& action) {
+    action->set_level(m_miscConfig.gpioActionUnlockState);
+    if (live(pinAllocations.at(UNLOCK_ACTION))) {
+        ESP_LOGI(TAG, "Triggering unlock action pin %d for %dms", m_miscConfig.unlockActionPin, m_miscConfig.unlockActionTimeout);
+        pinAllocations.at(UNLOCK_ACTION)->set_level(m_miscConfig.unlockActionGpioState);
+        if (m_unlockActionTimer) esp_timer_start_once(m_unlockActionTimer, m_miscConfig.unlockActionTimeout * 1000);
+    }
 }
 
 /**

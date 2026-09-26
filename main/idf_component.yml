@@ -5,3 +5,6 @@ dependencies:
   joltwallet/littlefs: ^1.20.1
   espp/serialization: ^1.0.22
   espressif/keyboard_button: ^1.0.0
+  espressif/mqtt: '*'
+  espressif/cjson: '*'
+  hfudev/json: '*'
