@@ -143,6 +143,11 @@ HardwareManager::HardwareManager(const espConfig::actions_config_t& miscConfig)
     auto new_lease = GPIOAllocator::instance().acquire(gpio_num_t(s.newValue), mode, meta->role, GPIOAllocator::PinConsumer::Hardware, meta->tag);
     if (new_lease.has_value()) {
       if (mode != GPIO_MODE_INPUT) {
+        if (meta->func == PinFunctions::LOCK_ACTION) {
+          level = !m_miscConfig.lockActionGpioState;     // idle level
+        } else if (meta->func == PinFunctions::UNLOCK_ACTION) {
+          level = !m_miscConfig.unlockActionGpioState;   // idle level
+        }
         new_lease.value().set_level(level);
       }
 
@@ -232,6 +237,12 @@ void HardwareManager::begin() {
     }
     if(live(pinAllocations.at(ALT_ACTION_LED))){
       pinAllocations.at(ALT_ACTION_LED).value().set_level(0);
+    }
+    if(live(pinAllocations.at(LOCK_ACTION))){
+      pinAllocations.at(LOCK_ACTION).value().set_level(!m_miscConfig.lockActionGpioState);
+    }
+    if(live(pinAllocations.at(UNLOCK_ACTION))){
+      pinAllocations.at(UNLOCK_ACTION).value().set_level(!m_miscConfig.unlockActionGpioState);
     }
     if(live(pinAllocations.at(ALT_ACTION_INIT))){
       gpio_num_t init_pin = pinAllocations.at(ALT_ACTION_INIT).value().get_pin();
@@ -560,31 +571,50 @@ void HardwareManager::applyLockState(int receivedState) {
 }
 
 /**
- * @brief Drives the action pin to the configured LOCKED level.
+ * @brief Drives the action pin to the configured LOCKED level and pulses LOCK_ACTION.
  *
- * Add any lock-only side effects here (e.g. an extra GPIO pulse, a distinct
- * feedback sequence, or publishing a dedicated event for other modules to react to).
+ * UNLOCK_ACTION is first forced to its idle level (cancelling any pulse in progress),
+ * then LOCK_ACTION is pulsed active for lockActionTimeout ms before the timer
+ * returns it to idle.
  */
 void HardwareManager::onLockEngaged(ActionLease& action) {
     action->set_level(m_miscConfig.gpioActionLockState);
+
+    // Release the opposite pin first: cancel any pending unlock pulse and return it to idle.
+    if (live(pinAllocations.at(UNLOCK_ACTION))) {
+        if (m_unlockActionTimer) esp_timer_stop(m_unlockActionTimer);
+        pinAllocations.at(UNLOCK_ACTION)->set_level(!m_miscConfig.unlockActionGpioState);
+    }
+
     if (live(pinAllocations.at(LOCK_ACTION))) {
         ESP_LOGI(TAG, "Triggering lock action pin %d for %dms", m_miscConfig.lockActionPin, m_miscConfig.lockActionTimeout);
+        if (m_lockActionTimer) esp_timer_stop(m_lockActionTimer); // restart cleanly if already pulsing
         pinAllocations.at(LOCK_ACTION)->set_level(m_miscConfig.lockActionGpioState);
-        if (m_lockActionTimer) esp_timer_start_once(m_lockActionTimer, m_miscConfig.lockActionTimeout * 1000);
+        if (m_lockActionTimer) esp_timer_start_once(m_lockActionTimer, (uint64_t)m_miscConfig.lockActionTimeout * 1000);
     }
 }
 
 /**
- * @brief Drives the action pin to the configured UNLOCKED level.
+ * @brief Drives the action pin to the configured UNLOCKED level and pulses UNLOCK_ACTION.
  *
- * Add any unlock-only side effects here.
+ * LOCK_ACTION is first forced to its idle level (cancelling any pulse in progress),
+ * then UNLOCK_ACTION is pulsed active for unlockActionTimeout ms before the timer
+ * returns it to idle.
  */
 void HardwareManager::onLockDisengaged(ActionLease& action) {
     action->set_level(m_miscConfig.gpioActionUnlockState);
+
+    // Release the opposite pin first: cancel any pending lock pulse and return it to idle.
+    if (live(pinAllocations.at(LOCK_ACTION))) {
+        if (m_lockActionTimer) esp_timer_stop(m_lockActionTimer);
+        pinAllocations.at(LOCK_ACTION)->set_level(!m_miscConfig.lockActionGpioState);
+    }
+
     if (live(pinAllocations.at(UNLOCK_ACTION))) {
         ESP_LOGI(TAG, "Triggering unlock action pin %d for %dms", m_miscConfig.unlockActionPin, m_miscConfig.unlockActionTimeout);
+        if (m_unlockActionTimer) esp_timer_stop(m_unlockActionTimer);
         pinAllocations.at(UNLOCK_ACTION)->set_level(m_miscConfig.unlockActionGpioState);
-        if (m_unlockActionTimer) esp_timer_start_once(m_unlockActionTimer, m_miscConfig.unlockActionTimeout * 1000);
+        if (m_unlockActionTimer) esp_timer_start_once(m_unlockActionTimer, (uint64_t)m_miscConfig.unlockActionTimeout * 1000);
     }
 }
 

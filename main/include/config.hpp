@@ -256,12 +256,14 @@ namespace espConfig
     bool hkDumbSwitchMode = HK_DUMB_SWITCH_MODE;
     // Dedicated pins pulsed on lock/unlock, in addition to gpioActionPin.
     // PIN_UNSET (255) disables each pin independently.
+    // GpioState is the ACTIVE (triggered) level; the pin idles at the opposite level.
+    // Defaults: idle high, pulse low for 250ms.
     uint8_t lockActionPin = PIN_LOCK;
     uint8_t lockActionGpioState = 0;
-    uint16_t lockActionTimeout = 250;
+    uint16_t lockActionTimeout = GPIO_ACTION_MOMENTARY_TIMEOUT; //250;
     uint8_t unlockActionPin = PIN_UNLOCK;
     uint8_t unlockActionGpioState = 0;
-    uint16_t unlockActionTimeout = 250;
+    uint16_t unlockActionTimeout = GPIO_ACTION_MOMENTARY_TIMEOUT; //250;
     uint8_t hkAltActionPin = GPIO_HK_ALT_ACTION_PIN;
     uint16_t hkAltActionTimeout = GPIO_HK_ALT_ACTION_TIMEOUT;
     uint8_t hkAltActionGpioState = GPIO_HK_ALT_ACTION_GPIO_STATE;
