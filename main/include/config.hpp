@@ -257,10 +257,10 @@ namespace espConfig
     // Dedicated pins pulsed on lock/unlock, in addition to gpioActionPin.
     // PIN_UNSET (255) disables each pin independently.
     uint8_t lockActionPin = PIN_LOCK;
-    uint8_t lockActionGpioState = 1;
+    uint8_t lockActionGpioState = 0;
     uint16_t lockActionTimeout = 250;
     uint8_t unlockActionPin = PIN_UNLOCK;
-    uint8_t unlockActionGpioState = 1;
+    uint8_t unlockActionGpioState = 0;
     uint16_t unlockActionTimeout = 250;
     uint8_t hkAltActionPin = GPIO_HK_ALT_ACTION_PIN;
     uint16_t hkAltActionTimeout = GPIO_HK_ALT_ACTION_TIMEOUT;
